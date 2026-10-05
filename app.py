@@ -13,9 +13,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+import httpx
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 
-from bulksms import BulkSMSClient, load_recipients, load_suppression_list
+from bulksms import BulkSMSClient, BulkSMSError, load_recipients, load_suppression_list, spend
 from bulksms.client import API_URL, estimate_parts
 from bulksms.recipients import RecipientReport
 
@@ -144,6 +145,12 @@ async def create_campaign(
     return {"id": campaign_id, "state": "queued", **report.summary()}
 
 
+@app.get("/spend", dependencies=[Depends(require_api_key)])
+def get_spend(month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$", description="Only this month, YYYY-MM (UTC)")] = None) -> dict:
+    """Credits used and messages sent, all time and per month, from the spend log (CLI and API sends)."""
+    return spend.totals(month=month)
+
+
 @app.get("/campaigns/{campaign_id}", dependencies=[Depends(require_api_key)])
 def get_campaign(campaign_id: str) -> dict:
     campaign = _campaigns.get(campaign_id)
@@ -162,12 +169,24 @@ def _run_campaign(campaign_id: str, client: BulkSMSClient, report: RecipientRepo
     try:
         with client:
             result = client.send(report.recipients, on_batch=progress)
+            balance_after = _balance(client)
     except Exception as e:  # keep the error visible to whoever polls the campaign
         with _lock:
             _campaigns[campaign_id].update(state="error", result={"error": str(e)})
         return
+    try:
+        spend_row = spend.record(campaign_id, "api", result, report.recipients, balance_after=balance_after)
+    except OSError as e:
+        spend_row = {"error": f"could not write the spend log: {e}"}
     with _lock:
         _campaigns[campaign_id].update(
             state="done" if not result.aborted else "aborted",
-            result={**result.summary(), "messages": [vars(o) for o in result.outcomes]},
+            result={**result.summary(), "spend": spend_row, "messages": [vars(o) for o in result.outcomes]},
         )
+
+
+def _balance(client: BulkSMSClient) -> float | None:
+    try:
+        return client.profile().get("credits", {}).get("balance")
+    except (BulkSMSError, httpx.HTTPError):
+        return None

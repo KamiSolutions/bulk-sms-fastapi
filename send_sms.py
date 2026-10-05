@@ -10,6 +10,9 @@ Examples
 
   # Try it against the local mock API (run mock_bulksms_server.py first)
   python send_sms.py mock_data/mock_recipients.csv -m "Hi {first_name}" --env-file .env.mock
+
+Every real send adds a row to the spend log (spend_log.csv, or SPEND_LOG_PATH).
+See the totals with:  python spend_report.py
 """
 
 from __future__ import annotations
@@ -19,9 +22,12 @@ import csv
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 
-from bulksms import BulkSMSClient, BulkSMSError, load_recipients, load_suppression_list
+import httpx
+
+from bulksms import BulkSMSClient, BulkSMSError, load_recipients, load_suppression_list, spend
 from bulksms.client import API_URL, estimate_parts
 
 
@@ -118,8 +124,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: could not log in to BulkSMS: {e}", file=sys.stderr)
             return 2
         result = client.send(report.recipients, on_batch=lambda n, total: print(f"  batch {n}/{total} submitted"))
+        try:
+            balance_after = client.profile().get("credits", {}).get("balance")
+        except (BulkSMSError, httpx.HTTPError):
+            balance_after = None
 
     print(f"\nSent {result.sent}, failed {result.failed}, credits used {result.credits:g}")
+    try:
+        row = spend.record(uuid.uuid4().hex, "cli", result, report.recipients, balance_after=balance_after)
+        month = spend.totals(month=row["timestamp_utc"][:7])["all_time"]
+        print(f"Spend logged to {spend.log_path()} ({month['credits_used']:g} credits this month so far)")
+    except OSError as e:
+        print(f"warning: could not write the spend log: {e}", file=sys.stderr)
     if result.aborted:
         print(f"Stopped early: {result.aborted}", file=sys.stderr)
     if args.report:

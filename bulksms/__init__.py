@@ -3,6 +3,7 @@
 from .client import BulkSMSClient, BulkSMSError, SendResult
 from .numbers import InvalidNumber, normalize_nanp
 from .recipients import Recipient, RecipientReport, load_recipients, load_suppression_list
+from . import spend
 
 __all__ = [
     "BulkSMSClient",
@@ -14,4 +15,5 @@ __all__ = [
     "RecipientReport",
     "load_recipients",
     "load_suppression_list",
+    "spend",
 ]

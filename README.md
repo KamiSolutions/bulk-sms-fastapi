@@ -21,6 +21,8 @@ cp .env.example .env   # then fill in the values
 | `BULKSMS_FROM` | The sending number in E.164, e.g. `+18885550100` (see "US and Canada rules" below) |
 | `BULKSMS_ROUTING_GROUP` | `ECONOMY`, `STANDARD` (default) or `PREMIUM` |
 | `APP_API_KEY` | Shared secret clients send as `X-API-Key` to the FastAPI service |
+| `SPEND_LOG_PATH` | Optional. Where the spend log is written (default `spend_log.csv` in the project folder) |
+| `SPEND_CREDIT_PRICE`, `SPEND_CURRENCY` | Optional. What one BulkSMS credit costs you, to show an estimated cost next to credits |
 
 The CLI reads `.env` itself (or another file with `--env-file`). For the service, export the variables or use `uvicorn --env-file .env`.
 
@@ -69,6 +71,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000 --env-file .env
 | `POST /campaigns/preview` | Upload a CSV, see valid/rejected counts, sample messages and SMS part estimate. Sends nothing. |
 | `POST /campaigns` | Upload a CSV and send. Returns `202` with a campaign id; sending runs in the background. |
 | `GET /campaigns/{id}` | Progress and, when finished, the per-number result (BulkSMS message id, status, credits). |
+| `GET /spend` | Credits used and messages sent, all time and per month (`?month=2026-10` for one month). |
 | `GET /health` | Liveness check. |
 
 Both POST endpoints take multipart form fields: `file` (the CSV), `message`, optional `footer`, `phone_column`, `countries` (default `US,CA`) and `suppress` (a file of opted-out numbers).
@@ -80,6 +83,25 @@ curl -H "X-API-Key: $APP_API_KEY" -F file=@recipients.csv \
 ```
 
 Campaign status is kept in memory, so it's lost on restart and only works with a single worker process. Swap `_campaigns` for Redis or a database before scaling out. Uploads are capped at 5 MB (`MAX_UPLOAD_BYTES`).
+
+## Spend tracking
+
+Every campaign that actually sends (CLI or service, not dry runs or previews) adds one row to `spend_log.csv`: time (UTC), campaign id, `cli` or `api`, sent, failed, credits used, sent and credits per country (US/CA), the credit balance after the send, and the reason if it stopped early.
+
+```bash
+python spend_report.py                  # table with a line per month and a total
+python spend_report.py --month 2026-10  # one month
+python spend_report.py --json
+curl -H "X-API-Key: $APP_API_KEY" http://localhost:8000/spend
+```
+
+What it can and can't see:
+
+- **Credits, yes.** BulkSMS returns the credit cost of each message and the account's credit balance, and both are logged.
+- **Money, no.** The BulkSMS API never returns a money amount. Set `SPEND_CREDIT_PRICE` to what one credit cost you (it depends on the bundle you bought) and the report adds an estimated cost.
+- **Number fees, no.** Registering a US or Canadian number and its monthly fee are billed on your BulkSMS account, not through the API. Check the account's billing page for those.
+
+Step-by-step PowerShell guide: [docs/spend-tracking.md](docs/spend-tracking.md). Mock runs (`.env.mock`) write to `spend_log.mock.csv` instead, so test sends never mix with real spend. The log is the only record of history, so back it up; it is in `.gitignore` so it never ends up in the repo.
 
 ## How sending works
 
