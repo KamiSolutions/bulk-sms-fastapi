@@ -104,8 +104,9 @@ class BulkSMSClient:
         self.max_retries = max_retries
         self.long_message_max_parts = long_message_max_parts
         self._sleep = sleep
+        self.base_url = (base_url or os.environ.get("BULKSMS_API_URL") or API_URL).rstrip("/")
         self._http = httpx.Client(
-            base_url=base_url or os.environ.get("BULKSMS_API_URL", API_URL),
+            base_url=self.base_url,
             auth=(self.token_id, self.token_secret),
             timeout=httpx.Timeout(30.0, connect=10.0),
             headers={"User-Agent": "glowhire-bulksms/1.0"},

@@ -16,7 +16,7 @@ from typing import Annotated
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 
 from bulksms import BulkSMSClient, load_recipients, load_suppression_list
-from bulksms.client import estimate_parts
+from bulksms.client import API_URL, estimate_parts
 from bulksms.recipients import RecipientReport
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 5 * 1024 * 1024))
@@ -97,7 +97,7 @@ Suppress = Annotated[UploadFile | None, File(description="Opted-out numbers to s
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "bulksms_api": (os.environ.get("BULKSMS_API_URL") or API_URL).rstrip("/")}
 
 
 @app.post("/campaigns/preview", dependencies=[Depends(require_api_key)])

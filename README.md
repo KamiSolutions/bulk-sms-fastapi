@@ -22,7 +22,7 @@ cp .env.example .env   # then fill in the values
 | `BULKSMS_ROUTING_GROUP` | `ECONOMY`, `STANDARD` (default) or `PREMIUM` |
 | `APP_API_KEY` | Shared secret clients send as `X-API-Key` to the FastAPI service |
 
-The CLI reads `.env` itself. For the service, export the variables or use `uvicorn --env-file .env`.
+The CLI reads `.env` itself (or another file with `--env-file`). For the service, export the variables or use `uvicorn --env-file .env`.
 
 ## The CSV
 
@@ -98,6 +98,10 @@ Sending to North America is more regulated than most countries. Confirm the spec
 3. **Consent and opt-out.** The US (TCPA) and Canada (CASL) require prior consent from each recipient, the sender to be identified in the message, and a working opt-out. Include something like "Reply STOP to opt out" (`--footer`), and keep the opted-out numbers in a file passed via `--suppress` / `suppress`. BulkSMS's inbound messages (or webhooks) are where STOP replies arrive.
 4. **Quiet hours.** Avoid sending outside about 8am to 9pm in the recipient's local time; some US states set stricter windows. Canada spans six time zones and the US spans six more, so schedule large sends with that in mind.
 5. **Content.** Carriers filter SHAFT content (sex, hate, alcohol, firearms, tobacco/cannabis) and URL shorteners like bit.ly. Use your own domain for links.
+
+## Trying it without a BulkSMS account
+
+`mock_bulksms_server.py` is a local fake of the BulkSMS API, and `.env.mock` points the CLI (`--env-file .env.mock`) and the service (`uvicorn ... --env-file .env.mock`) at it. `mock_data/` has a CSV full of valid and invalid US/Canadian numbers to try. Step-by-step PowerShell instructions and expected output: [docs/testing-with-mock.md](docs/testing-with-mock.md).
 
 ## Tests
 

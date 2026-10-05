@@ -7,6 +7,9 @@ Examples
 
   # Send for real (asks for confirmation unless --yes)
   python send_sms.py recipients.csv -m "Hi {first_name} ..." --footer "Reply STOP to opt out"
+
+  # Try it against the local mock API (run mock_bulksms_server.py first)
+  python send_sms.py mock_data/mock_recipients.csv -m "Hi {first_name}" --env-file .env.mock
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import sys
 from pathlib import Path
 
 from bulksms import BulkSMSClient, BulkSMSError, load_recipients, load_suppression_list
-from bulksms.client import estimate_parts
+from bulksms.client import API_URL, estimate_parts
 
 
 def _load_dotenv(path: Path) -> None:
@@ -34,7 +37,6 @@ def _load_dotenv(path: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    _load_dotenv(Path(__file__).with_name(".env"))
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("csv", type=Path, help="CSV with a phone column (phone, mobile, number, to ...)")
     p.add_argument("-m", "--message", help="Message template; {column} is replaced from each row")
@@ -50,7 +52,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="Validate and preview only; send nothing")
     p.add_argument("-y", "--yes", action="store_true", help="Don't ask for confirmation")
     p.add_argument("-v", "--verbose", action="store_true")
+    p.add_argument("--env-file", type=Path, default=Path(__file__).with_name(".env"),
+                   help="Settings file to read (default: .env next to this script; use .env.mock to try it safely)")
     args = p.parse_args(argv)
+    if args.env_file != p.get_default("env_file") and not args.env_file.exists():
+        print(f"error: {args.env_file} not found", file=sys.stderr)
+        return 2
+    _load_dotenv(args.env_file)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
 
     template = args.message
@@ -100,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    if client.base_url != API_URL:
+        print(f"Using BulkSMS API at {client.base_url} (not the real BulkSMS)")
     with client:
         try:
             profile = client.profile()
