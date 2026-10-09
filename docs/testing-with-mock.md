@@ -1,6 +1,6 @@
-# Trying it out against the mock BulkSMS API (Windows PowerShell)
+# Trying the API against the mock BulkSMS API (Windows PowerShell)
 
-This runs the CLI and the FastAPI service end to end on your machine with **no BulkSMS account, no real credentials and no real messages**. A small local server, `mock_bulksms_server.py`, pretends to be `api.bulksms.com`, and `.env.mock` points everything at it.
+This runs the FastAPI service end to end on your machine with **no BulkSMS account, no real credentials and no real messages**. A small local server, `mock_bulksms_server.py`, pretends to be `api.bulksms.com`, and `.env.mock` points the service at it.
 
 What's included:
 
@@ -11,11 +11,11 @@ What's included:
 | `mock_data/mock_recipients.csv` | 22 rows: valid US and Canadian numbers in many formats, duplicates, Caribbean and Puerto Rico numbers, toll-free, too short, letters, UK, N11, blank, two opted-out numbers, one number the mock rejects. |
 | `mock_data/mock_optouts.csv` | Two opted-out numbers that appear in the CSV. |
 
-The real-send path is unchanged: without `--env-file .env.mock` (CLI) or `--env-file .env.mock` (uvicorn), the code still talks to `https://api.bulksms.com/v1`.
+The real-send path is unchanged: without `--env-file .env.mock`, the service still talks to `https://api.bulksms.com/v1`.
 
 ## 1. One-time setup
 
-Open PowerShell in the project folder (for example `C:\Users\injozi\bulk-sms-fastapi`):
+Open PowerShell in the project folder (for example `C:\Users\<you>\bulk-sms-fastapi`):
 
 ```powershell
 py -m venv .venv
@@ -29,7 +29,7 @@ If `Activate.ps1` is blocked ("running scripts is disabled"), run this once in t
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-You'll use **three PowerShell windows**, each in the project folder with `.\.venv\Scripts\Activate.ps1` run first.
+You'll use **three PowerShell windows**, each in the project folder with `.\.venv\Scripts\Activate.ps1` run first. The examples use port 8010 for the service; any free port works.
 
 ## 2. Window 1: start the mock BulkSMS API
 
@@ -45,86 +45,29 @@ Mock BulkSMS API on http://127.0.0.1:8001/v1  (no real SMS is ever sent)
 
 Leave it running. Each message it "sends" is printed here.
 
-## 3. Window 2: the command-line script
-
-Preview only (sends nothing, not even to the mock):
+## 3. Window 2: start the service against the mock
 
 ```powershell
-python send_sms.py mock_data\mock_recipients.csv `
-  -m "Hi {first_name}, your interview is on {date}." `
-  --footer "Reply STOP to opt out" `
-  --suppress mock_data\mock_optouts.csv `
-  --env-file .env.mock --dry-run
+uvicorn app:app --port 8010 --env-file .env.mock
 ```
 
-Expect:
+Leave it running. The requests below go in window 3.
 
-```
-Recipients: 9 valid {'CA': 5, 'US': 4}, 11 rejected, 2 duplicates removed
-Estimated SMS parts: 9
-  row 11: '876-555-0100' skipped (area code 876 is outside the US and Canada)
-  row 12: '+1 809 555 0123' skipped (area code 809 is outside the US and Canada)
-  row 13: '787-555-0144' skipped (area code 787 is outside the US and Canada)
-  row 14: '800-555-0100' skipped (toll-free numbers cannot receive SMS)
-  row 15: '555-0123' skipped (expected 10 digits after +1, got 7)
-  row 16: '+44 20 7946 0958' skipped (not a +1 (US/Canada) number)
-  row 17: '212-555-CALL' skipped (contains non-digit characters)
-  row 18: '911-555-0100' skipped (N11 service codes are not phone numbers)
-  row 19: '' skipped (empty)
-  row 20: '+1 617 555 0181' skipped (opted out)
-  row 21: '647-555-0192' skipped (opted out)
-  ...
-Dry run: nothing was sent.
-```
+## 4. Window 3: call the API
 
-The 2 duplicates are rows 4 and 10 (the same numbers as rows 2 and 1, written differently).
-
-Now "send" to the mock, in batches of 4 so you can see batching, and save a report:
+First check the service is pointed at the mock:
 
 ```powershell
-python send_sms.py mock_data\mock_recipients.csv `
-  -m "Hi {first_name}, your interview is on {date}." `
-  --footer "Reply STOP to opt out" `
-  --suppress mock_data\mock_optouts.csv `
-  --env-file .env.mock --batch-size 4 --report results_mock.csv -y
+Invoke-RestMethod http://localhost:8010/health
 ```
 
-Expect, after the same preview:
+Expect `ok: True` and `bulksms_api: http://127.0.0.1:8001/v1`. **If `bulksms_api` shows `https://api.bulksms.com/v1`, the service is pointed at the real BulkSMS**: stop it and start it again with `--env-file .env.mock`.
 
-```
-Using BulkSMS API at http://127.0.0.1:8001/v1 (not the real BulkSMS)
-Account mock-account: 1000.0 credits available
-  batch 1/3 submitted
-  batch 2/3 submitted
-  batch 3/3 submitted
+If you get `Not Found` instead, something other than the service is answering on port 8010 (usually the mock server, or an older uvicorn still running). Stop everything on that port with Ctrl+C, or find it with `Get-NetTCPConnection -LocalPort 8010 | Select OwningProcess` and `Stop-Process -Id <that number>`, then start the service again.
 
-Sent 8, failed 1, credits used 8
-Report written to results_mock.csv
-```
+You can also try every endpoint from the browser at http://localhost:8010/docs: open an endpoint, click **Try it out**, and put `mock-key` in its `x-api-key` field.
 
-The one failure is Henry, `305-555-0666`: the mock rejects any number ending in `0666` so you can see a per-message failure. The exit code is 1 because not every message went through. Window 1 shows the 9 messages, and `results_mock.csv` lists every row with its message id, status or skip reason (open it in Excel). `results*.csv` is already in `.gitignore`.
-
-**Always check for the line `Using BulkSMS API at http://127.0.0.1:8001/v1`.** If it's missing, the script is pointed at the real BulkSMS.
-
-## 4. Window 3: the FastAPI service
-
-Start it in window 3, against the mock:
-
-```powershell
-uvicorn app:app --port 8000 --env-file .env.mock
-```
-
-Leave it running and go back to window 2 for the requests below. First check it's pointed at the mock:
-
-```powershell
-Invoke-RestMethod http://localhost:8000/health
-```
-
-Expect `ok: True` and `bulksms_api: http://127.0.0.1:8001/v1`.
-
-You can also upload the CSV from the browser at http://localhost:8000/docs: open an endpoint, click **Try it out**, and put `mock-key` in its `x-api-key` field.
-
-### Upload the CSV with curl
+### With curl
 
 Use `curl.exe`, not `curl` (in Windows PowerShell 5.1, `curl` is an alias for a different command).
 
@@ -136,10 +79,26 @@ curl.exe -s -H "X-API-Key: mock-key" `
   -F "suppress=@mock_data/mock_optouts.csv" `
   -F "message=Hi {first_name}, your interview is on {date}." `
   -F "footer=Reply STOP to opt out" `
-  http://localhost:8000/campaigns/preview
+  http://localhost:8010/campaigns/preview
 ```
 
-Expect JSON starting `{"valid":9,"rejected":11,"duplicates_removed":2,"by_country":{"CA":5,"US":4},"estimated_sms_parts":9,...` with the rejected rows and 5 sample messages.
+Expect JSON starting `{"valid":9,"rejected":11,"duplicates_removed":2,"by_country":{"CA":5,"US":4},"estimated_sms_parts":9,...` followed by the rejected rows with their reasons and 5 sample messages. The rejected rows are:
+
+```
+row 11: 876-555-0100      area code 876 is outside the US and Canada
+row 12: +1 809 555 0123   area code 809 is outside the US and Canada
+row 13: 787-555-0144      area code 787 is outside the US and Canada
+row 14: 800-555-0100      toll-free numbers cannot receive SMS
+row 15: 555-0123          expected 10 digits after +1, got 7
+row 16: +44 20 7946 0958  not a +1 (US/Canada) number
+row 17: 212-555-CALL      contains non-digit characters
+row 18: 911-555-0100      N11 service codes are not phone numbers
+row 19: (blank)           empty
+row 20: +1 617 555 0181   opted out
+row 21: 647-555-0192      opted out
+```
+
+Without the `suppress` file the two opted-out numbers count as valid, so you'd see 11 valid and 9 rejected instead (and later 10 sent, 1 failed). Both are correct for their request. The 2 duplicates are rows 4 and 10 (the same numbers as rows 2 and 1, written differently).
 
 Send (to the mock) by posting the same thing to `/campaigns`:
 
@@ -149,16 +108,24 @@ curl.exe -s -H "X-API-Key: mock-key" `
   -F "suppress=@mock_data/mock_optouts.csv" `
   -F "message=Hi {first_name}, your interview is on {date}." `
   -F "footer=Reply STOP to opt out" `
-  http://localhost:8000/campaigns
+  http://localhost:8010/campaigns
 ```
 
 Expect `{"id":"<campaign id>","state":"queued","valid":9,...}`. Then check it (paste the id):
 
 ```powershell
-curl.exe -s -H "X-API-Key: mock-key" http://localhost:8000/campaigns/<campaign id>
+curl.exe -s -H "X-API-Key: mock-key" http://localhost:8010/campaigns/<campaign id>
 ```
 
-Expect `"state":"done"` and `"result":{"sent":8,"failed":1,"credits_used":8.0,...}` followed by one entry per message.
+Expect `"state":"done"` and `"result":{"sent":8,"failed":1,"credits_used":8.0,...}`, the spend row it logged, then one entry per message. The one failure is Henry, `305-555-0666`: the mock rejects any number ending in `0666` so you can see a per-message failure. Window 1 shows the 9 messages.
+
+Spend so far:
+
+```powershell
+curl.exe -s -H "X-API-Key: mock-key" http://localhost:8010/spend
+```
+
+Expect `"all_time":{"campaigns":1,"sent":8,"failed":1,"credits_used":8,"us_sent":3,...,"ca_sent":5,...}`. Mock runs log to `spend_log.mock.csv`, never to the real `spend_log.csv`.
 
 ### Or with Invoke-RestMethod (PowerShell 7 or later)
 
@@ -172,12 +139,14 @@ $form = @{
   message  = "Hi {first_name}, your interview is on {date}."
   footer   = "Reply STOP to opt out"
 }
-Invoke-RestMethod http://localhost:8000/campaigns/preview -Method Post -Headers $h -Form $form
+Invoke-RestMethod http://localhost:8010/campaigns/preview -Method Post -Headers $h -Form $form
 
-$c = Invoke-RestMethod http://localhost:8000/campaigns -Method Post -Headers $h -Form $form
+$c = Invoke-RestMethod http://localhost:8010/campaigns -Method Post -Headers $h -Form $form
 Start-Sleep 1
-$r = Invoke-RestMethod "http://localhost:8000/campaigns/$($c.id)" -Headers $h
+$r = Invoke-RestMethod "http://localhost:8010/campaigns/$($c.id)" -Headers $h
 $r.state; $r.result.messages | Format-Table phone, ok, status, error
+
+Invoke-RestMethod http://localhost:8010/spend -Headers $h | ConvertTo-Json -Depth 5
 ```
 
 ## 5. See what the mock received
@@ -189,36 +158,26 @@ curl.exe -s -X POST http://127.0.0.1:8001/mock/reset    # clear it and restore 1
 
 ## 6. Trying failure cases
 
-Stop the mock (Ctrl+C in window 1) and restart it with these settings to see how the sender copes:
+**Retries and running out of credit.** Stop the mock (Ctrl+C in window 1) and restart it with these settings:
 
 ```powershell
-$env:MOCK_FAIL_FIRST = 2   # the first 2 batches get "503 Service Unavailable"
-$env:MOCK_CREDITS = 6      # credit runs out part way through
+$env:MOCK_FAIL_FIRST = 2   # the first 2 requests get "503 Service Unavailable"
+$env:MOCK_CREDITS = 6      # less credit than the 9 messages need
 python mock_bulksms_server.py
 ```
 
-Then rerun the `--batch-size 4` send from step 3. Add `-v` to see the retries. Expect:
+Send the campaign again from window 3 and check it after a few seconds. Window 2 shows `BulkSMS 503, retrying in 1.0s` twice: the batch is retried with the same deduplication id until the mock accepts the request. Then the mock refuses it for lack of credit, so the campaign ends with `"state":"aborted"`, `"sent":0,"failed":9` and `"aborted":"BulkSMS 403: Insufficient Credits - Balance 6, this batch needs 8 (mock)"`. All 9 recipients are one batch (the service sends up to 100 per request), so nothing goes out and every row is reported as not sent rather than attempted.
 
-```
-WARNING BulkSMS 503, retrying in 1.0s
-...
-Sent 4, failed 7, credits used 4
-Stopped early: BulkSMS 403: Insufficient Credits - Balance 2, this batch needs 4 (mock)
-```
+When finished, clear the mock settings in window 1 with `Remove-Item Env:MOCK_FAIL_FIRST, Env:MOCK_CREDITS` and restart the mock.
 
-The first batch is retried with the same deduplication id until it goes through; the second batch is refused for lack of credit, and the rest are reported as not sent rather than attempted.
-
-A wrong API token: in window 2 run
+**A wrong API token.** Stop the service (Ctrl+C in window 2) and restart it with a bad token id:
 
 ```powershell
 $env:BULKSMS_TOKEN_ID = "bad"
-python send_sms.py mock_data\mock_recipients.csv -m "Hi {first_name}" --env-file .env.mock -y
-Remove-Item Env:BULKSMS_TOKEN_ID
+uvicorn app:app --port 8010 --env-file .env.mock
 ```
 
-Expect `error: could not log in to BulkSMS: BulkSMS 401: Unauthorized ...` and nothing sent.
-
-When finished, clear the mock settings in window 1 with `Remove-Item Env:MOCK_FAIL_FIRST, Env:MOCK_CREDITS`.
+Send the campaign again. It ends with `"state":"aborted"` and `"aborted":"BulkSMS 401: Unauthorized - The token id or secret is wrong (mock: token id 'bad')"`, and nothing is sent. Afterwards stop the service, run `Remove-Item Env:BULKSMS_TOKEN_ID` and start it again.
 
 ## 7. Automated tests
 
@@ -226,10 +185,10 @@ When finished, clear the mock settings in window 1 with `Remove-Item Env:MOCK_FA
 python -m pytest -q
 ```
 
-Expect `38 passed`. These use in-process fakes and don't need the mock server running.
+Expect `43 passed`. These use in-process fakes and don't need the mock server running.
 
 ## Notes
 
-- Settings already set in your PowerShell session win over the file, so a `$env:BULKSMS_API_URL` you set yourself would override `.env.mock`. The "Using BulkSMS API at ..." line and `/health` show which API is in use.
+- Settings already set in your PowerShell session win over the file, so a `$env:BULKSMS_API_URL` you set yourself would override `.env.mock`. `/health` shows which API is in use.
 - The mock charges 1 credit per SMS part. Real BulkSMS pricing to the US and Canada is different; check your account's price list.
 - The mock accepts every message straight away. Real delivery reports (DELIVERED, UNDELIVERABLE) come later from BulkSMS and aren't simulated.

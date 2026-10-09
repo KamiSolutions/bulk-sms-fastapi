@@ -1,7 +1,7 @@
 """FastAPI service: upload a CSV of US/Canadian numbers and send an SMS to each via BulkSMS.com.
 
-Run:  uvicorn app:app --host 0.0.0.0 --port 8000
-Docs: http://localhost:8000/docs
+Run:  uvicorn app:app --port 8010 --env-file .env
+Docs: http://localhost:8010/docs
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ async def create_campaign(
 
 @app.get("/spend", dependencies=[Depends(require_api_key)])
 def get_spend(month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$", description="Only this month, YYYY-MM (UTC)")] = None) -> dict:
-    """Credits used and messages sent, all time and per month, from the spend log (CLI and API sends)."""
+    """Credits used and messages sent, all time and per month, from the spend log."""
     return spend.totals(month=month)
 
 

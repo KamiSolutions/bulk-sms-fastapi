@@ -1,10 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
-import send_sms
-import spend_report
-from bulksms import BulkSMSClient, load_recipients, spend
+from bulksms import load_recipients, spend
 from bulksms.client import MessageOutcome, SendResult
-from tests.fake_bulksms import FakeBulkSMS
 
 RECIPIENTS = load_recipients(b"phone\n4165550123\n2125550147\n6045550199\n", template="Hi").recipients
 
@@ -23,7 +20,7 @@ def at(month):
 
 def test_record_splits_by_country(tmp_path):
     path = tmp_path / "log.csv"
-    row = spend.record("c1", "cli", result(), RECIPIENTS, balance_after=97.5, path=path)
+    row = spend.record("c1", "api", result(), RECIPIENTS, balance_after=97.5, path=path)
     assert row["sent"] == 2 and row["failed"] == 1 and row["credits_used"] == 3
     assert (row["us_sent"], row["ca_sent"], row["us_credits"], row["ca_credits"]) == (1, 1, 1, 2)
     rows = spend.read(path)
@@ -33,7 +30,7 @@ def test_record_splits_by_country(tmp_path):
 def test_totals_per_month(tmp_path, monkeypatch):
     path = tmp_path / "log.csv"
     monkeypatch.delenv("SPEND_CREDIT_PRICE", raising=False)
-    spend.record("a", "cli", result(), RECIPIENTS, balance_after=10, path=path, now=at("2026-09"))
+    spend.record("a", "api", result(), RECIPIENTS, balance_after=10, path=path, now=at("2026-09"))
     spend.record("b", "api", result(), RECIPIENTS, balance_after=7, path=path, now=at("2026-10"))
     spend.record("c", "api", result(), RECIPIENTS, balance_after=4, path=path, now=at("2026-10"))
     t = spend.totals(path)
@@ -48,7 +45,7 @@ def test_estimated_cost(tmp_path, monkeypatch):
     path = tmp_path / "log.csv"
     monkeypatch.setenv("SPEND_CREDIT_PRICE", "0.04")
     monkeypatch.setenv("SPEND_CURRENCY", "USD")
-    spend.record("a", "cli", result(), RECIPIENTS, path=path)
+    spend.record("a", "api", result(), RECIPIENTS, path=path)
     t = spend.totals(path)
     assert t["all_time"]["estimated_cost"] == 0.12 and t["currency"] == "USD"
 
@@ -57,25 +54,3 @@ def test_empty_log(tmp_path):
     t = spend.totals(tmp_path / "missing.csv")
     assert t["all_time"]["campaigns"] == 0 and t["by_month"] == {} and t["latest_balance"] is None
 
-
-def test_cli_send_logs_and_report_shows_it(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("SPEND_LOG_PATH", str(tmp_path / "log.csv"))
-    fake = FakeBulkSMS()
-    monkeypatch.setattr(send_sms, "BulkSMSClient",
-                        lambda **kw: BulkSMSClient("id", "secret", transport=fake.transport(), **kw))
-    csv_file = tmp_path / "r.csv"
-    csv_file.write_text("phone\n4165550123\n2125550147\n")
-    env = tmp_path / "none.env"
-    env.write_text("")
-    assert send_sms.main([str(csv_file), "-m", "Hi", "-y", "--env-file", str(env)]) == 0
-    assert "Spend logged to" in capsys.readouterr().out
-    assert len(spend.read()) == 1
-
-    assert send_sms.main([str(csv_file), "-m", "Hi", "--dry-run", "--env-file", str(env)]) == 0
-    assert len(spend.read()) == 1  # a dry run logs nothing
-
-    assert spend_report.main(["--env-file", str(env)]) == 0
-    out = capsys.readouterr().out
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    assert month in out and "Total" in out
-    assert spend_report.main(["--month", "10-2026"]) == 2

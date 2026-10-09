@@ -1,17 +1,14 @@
 # Bulk SMS to the US and Canada: Technical Summary
 
 **Prepared by:** GlowHire
-**Date:** 5 October 2026
+**Date:** 5 October 2026 (updated 9 October 2026: this repository is now the API only)
 **Status:** Code complete and tested against a mock API. Live sending is blocked until a US/Canada sender number is approved on our BulkSMS.com account.
 
 ---
 
 ## 1. Summary
 
-We built a Python tool that sends bulk SMS to US and Canadian mobile numbers through our existing BulkSMS.com account. Recipients are loaded from a CSV file. It comes in two forms that share one core library:
-
-- a **command-line script** for one-off campaigns, and
-- a **FastAPI web service** with a CSV upload endpoint, so other systems or a web form can trigger sends.
+We built a Python tool that sends bulk SMS to US and Canadian mobile numbers through our existing BulkSMS.com account. Recipients are loaded from a CSV file uploaded to a **FastAPI web service**, so other systems or a web form can trigger sends. The command-line script version is kept in a separate repository (`bulk-sms-script`); both use the same core library.
 
 The software side is done. The open item is regulatory: US and Canadian carriers do not accept alphanumeric sender names (e.g. "GlowHire"), so we need a registered US/Canadian sending number. A South African company can get one through BulkSMS without a US entity, but approval takes roughly 2 to 8 weeks.
 
@@ -22,9 +19,10 @@ The software side is done. The open item is regulatory: US and Canadian carriers
 | `bulksms/numbers.py` | Normalises phone numbers to E.164 (`+14165550123`) and classifies each as US or CA by area code |
 | `bulksms/recipients.py` | CSV loader, message templating, opt-out list, footer, deduplication |
 | `bulksms/client.py` | BulkSMS JSON REST API client (batching, retries, idempotency) |
-| `send_sms.py` | Command-line interface |
+| `bulksms/spend.py` | Spend log: credits used per campaign, totalled per month |
 | `app.py` | FastAPI service |
-| `tests/` | 34 automated tests against a fake BulkSMS API (all passing; no real messages sent) |
+| `mock_bulksms_server.py` | Local fake of the BulkSMS API for testing without an account |
+| `tests/` | 43 automated tests against a fake BulkSMS API (all passing; no real messages sent) |
 
 **Stack:** Python 3.10+, `httpx`, `fastapi`, `uvicorn`, `python-multipart`, `pytest`. No database.
 
@@ -54,10 +52,11 @@ Every number is cleaned to E.164. Rows are rejected, with the reason reported, i
 ## 4. How to run it
 
 ### Setup
-```bash
-python3 -m venv .venv && . .venv/bin/activate
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env   # fill in values
+Copy-Item .env.example .env   # fill in values
 ```
 
 | Variable | Meaning |
@@ -67,22 +66,10 @@ cp .env.example .env   # fill in values
 | `BULKSMS_ROUTING_GROUP` | `ECONOMY`, `STANDARD` (default) or `PREMIUM` |
 | `APP_API_KEY` | Shared secret clients send as `X-API-Key` to the FastAPI service |
 
-### Command line
-```bash
-# Validate and preview only; sends nothing
-python send_sms.py recipients.csv -m "Hi {first_name}, your interview is on {date}." \
-    --footer "Reply STOP to opt out" --dry-run
-
-# Send, skipping opted-out numbers, and write a per-number report
-python send_sms.py recipients.csv --message-file msg.txt --footer "Reply STOP to opt out" \
-    --suppress optouts.csv --report results.csv
-```
-The script asks for confirmation before sending (`-y` skips it). Exit code is 0 only if every message was accepted.
-
 ### FastAPI service
-```bash
-uvicorn app:app --host 0.0.0.0 --port 8000 --env-file .env
-# Interactive API docs at http://localhost:8000/docs
+```powershell
+uvicorn app:app --port 8010 --env-file .env
+# Interactive API docs at http://localhost:8010/docs
 ```
 
 | Endpoint | Purpose |
@@ -90,13 +77,14 @@ uvicorn app:app --host 0.0.0.0 --port 8000 --env-file .env
 | `POST /campaigns/preview` | Upload CSV; returns valid/rejected counts, sample messages, estimated SMS parts. Sends nothing. |
 | `POST /campaigns` | Upload CSV and send. Returns `202` with a campaign id; sending runs in the background. |
 | `GET /campaigns/{id}` | Progress, then per-number results (BulkSMS message id, status, credits). |
+| `GET /spend` | Credits used and messages sent, all time and per month, split US/CA. |
 | `GET /health` | Liveness check. |
 
 All campaign endpoints require the `X-API-Key` header. Uploads are capped at 5 MB.
 
 ### Tests
-```bash
-pytest -q
+```powershell
+python -m pytest -q
 ```
 
 ### Known limitations (v1)
@@ -151,10 +139,10 @@ Canada has no mandatory registry like the US, but Rogers, Bell and Telus filter 
 - avoid SHAFT content (sex, hate, alcohol, firearms, tobacco/cannabis);
 - do not use public URL shorteners (bit.ly etc.); use our own domain for links.
 
-The tool supports compliance with `--footer "Reply STOP to opt out"` and the `--suppress` opt-out list, but consent collection and record-keeping happen outside the tool.
+The service supports compliance with the `footer` field (e.g. "Reply STOP to opt out") and the `suppress` opt-out list, but consent collection and record-keeping happen outside the tool.
 
 ### Fallback providers
-If BulkSMS cannot approve us, Twilio, Telnyx, Bandwidth, Sinch and Vonage all rent US toll-free numbers to foreign businesses. Since February 2026 toll-free verification requires a business registration number and issuing country, and non-US/Canadian registration numbers are accepted. Approval is typically days to a few weeks. A toll-free number can text both the US and Canada, though Canadian carriers may filter toll-free more aggressively than registered long codes. Switching provider would mean replacing `bulksms/client.py`; the CSV, validation, CLI and API layers stay the same.
+If BulkSMS cannot approve us, Twilio, Telnyx, Bandwidth, Sinch and Vonage all rent US toll-free numbers to foreign businesses. Since February 2026 toll-free verification requires a business registration number and issuing country, and non-US/Canadian registration numbers are accepted. Approval is typically days to a few weeks. A toll-free number can text both the US and Canada, though Canadian carriers may filter toll-free more aggressively than registered long codes. Switching provider would mean replacing `bulksms/client.py`; the CSV, validation and API layers stay the same.
 
 Options ruled out:
 - **Sole-proprietor 10DLC:** needs a US/Canadian mobile for verification; register as the company instead.

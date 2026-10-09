@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A local stand-in for api.bulksms.com, for trying the CLI and the service without
+"""A local stand-in for api.bulksms.com, for trying the Bulk SMS service without
 real credentials or real messages. Nothing leaves your machine.
 
 Run:   python mock_bulksms_server.py            (listens on http://127.0.0.1:8001)
@@ -81,6 +81,16 @@ async def basic_auth(request: Request, call_next):
         if token == "bad":
             return _problem(401, "Unauthorized", "The token id or secret is wrong (mock: token id 'bad')")
     return await call_next(request)
+
+
+@app.exception_handler(404)
+async def not_found(request: Request, exc):
+    # Most likely someone sent a request for the Bulk SMS service (app.py) to the mock by mistake.
+    return JSONResponse(
+        {"detail": f"Not Found: this is the mock BulkSMS API, which has no {request.url.path}. "
+                   "The Bulk SMS service is started separately with: uvicorn app:app --port 8010 --env-file .env.mock"},
+        status_code=404,
+    )
 
 
 @app.get("/v1/profile")

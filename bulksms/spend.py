@@ -41,7 +41,7 @@ _lock = threading.Lock()
 
 def log_path() -> Path:
     """SPEND_LOG_PATH if set, else spend_log.csv. A relative path is taken from the project
-    folder, so the CLI and the service write the same file wherever they are started from."""
+    folder, so the service writes the same file wherever it is started from."""
     return DEFAULT_PATH.parent / os.environ.get("SPEND_LOG_PATH", DEFAULT_PATH.name)
 
 
